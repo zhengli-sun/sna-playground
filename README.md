@@ -92,10 +92,44 @@ After getting the SNA URL:
 
 ### Step 2: Invoke the SNA URL
 
+Before tapping the URL, ensure your device is properly configured:
+
+#### iOS Device Settings Checklist ✅
+
+**CRITICAL**: For SNA to work on iOS, you must disable these features that interfere with carrier detection:
+
+1. **Turn OFF Wi-Fi**
+   - Settings → Wi-Fi → Toggle OFF
+   - Ensure you're using cellular data only
+
+2. **Turn OFF Dual SIM** (if applicable)
+   - Use only the SIM card associated with the phone number being verified
+   - Settings → Cellular → turn off the other SIM
+
+3. **Turn OFF iCloud Private Relay**
+   - Settings → [Your Name] → iCloud → Private Relay → Toggle OFF
+
+4. **Turn OFF "Limit IP Address Tracking (Cellular)"**
+   - Settings → Cellular → Toggle OFF "Limit IP Address Tracking"
+
+5. **Turn OFF VPN Profile**
+   - Settings → VPN → Disconnect or disable any active VPN
+   - Or Settings → General → VPN & Device Management
+
+6. **Turn OFF Safari "Hide IP Address"**
+   - Settings → Safari → Hide IP Address → Toggle OFF
+   - Or set to "Off" instead of "Trackers and Websites"
+
+**Why these settings matter**: SNA requires direct carrier network access. Features like Private Relay, VPN, and IP masking prevent the carrier from properly identifying your phone number, causing verification failures (Error -10 or 60519).
+
+#### Steps to Invoke the URL:
+
 1. Send the URL to yourself via email or Slack
-2. Turn off Wi-Fi on your mobile device (use cellular data only)
+2. Verify all iOS settings above are configured correctly
 3. Tap the URL on your mobile device
-4. See the [Testing Guide Step 2](https://www.twilio.com/docs/verify/sna-testing-guide#step-2-invoke-the-sna-url) for details
+4. Wait for the success page (or error message)
+
+See the [Testing Guide Step 2](https://www.twilio.com/docs/verify/sna-testing-guide#step-2-invoke-the-sna-url) for more details.
 
 **Important for email:**
 - Some email clients (e.g., Microsoft Safe Links) may scan and invalidate the URL
@@ -178,9 +212,12 @@ You can test SNA without carrier approval by:
 
 | Issue | Solution |
 |-------|----------|
+| **Error 60008: Unsupported Carrier** | Register your phone number as a Live Test Number in Twilio Console |
+| **Error -10 or 60519: Verification Failed/Pending** | Check iOS settings: disable Private Relay, VPN, Dual SIM, IP tracking (see Step 2 checklist) |
 | 404 Not Found | Verification expired (10 min limit) - restart from Step 1 |
-| URL doesn't work | Ensure Wi-Fi is OFF and using cellular data |
-| Email invalidated URL | Use `hxxps://` trick or Slack instead |
+| URL doesn't work | Ensure Wi-Fi is OFF and using cellular data only |
+| Email invalidated URL | Use `hxxps://` trick or Slack code block instead |
+| Dual SIM issues | Ensure data connection is on the SIM matching the phone number |
 | Error codes present | Check [Error Dictionary](https://www.twilio.com/docs/verify/api/verification#sna-error-codes) |
 
 ## Resources
