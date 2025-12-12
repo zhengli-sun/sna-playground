@@ -120,6 +120,15 @@ Before tapping the URL, ensure your device is properly configured:
    - Settings → Safari → Hide IP Address → Toggle OFF
    - Or set to "Off" instead of "Trackers and Websites"
 
+**💡 eSIM Cache Issue**: If SNA still fails after configuring the above settings, try this:
+- Settings → Cellular → Turn OFF all eSIM cards
+- Wait 10 seconds
+- Turn the eSIM back ON (the one with the phone number you're verifying)
+- Wait for the cellular connection to re-establish
+- Then try the SNA URL again
+
+This clears cached network/carrier information that may be interfering with SNA carrier detection.
+
 **Why these settings matter**: SNA requires direct carrier network access. Features like Private Relay, VPN, and IP masking prevent the carrier from properly identifying your phone number, causing verification failures (Error -10 or 60519).
 
 #### Steps to Invoke the URL:
@@ -213,11 +222,12 @@ You can test SNA without carrier approval by:
 | Issue | Solution |
 |-------|----------|
 | **Error 60008: Unsupported Carrier** | Register your phone number as a Live Test Number in Twilio Console |
-| **Error -10 or 60519: Verification Failed/Pending** | Check iOS settings: disable Private Relay, VPN, Dual SIM, IP tracking (see Step 2 checklist) |
+| **Error -10 or 60519: Verification Failed/Pending** | 1) Check iOS settings (see Step 2 checklist) 2) Try turning OFF all eSIMs, wait 10s, turn back ON |
 | 404 Not Found | Verification expired (10 min limit) - restart from Step 1 |
 | URL doesn't work | Ensure Wi-Fi is OFF and using cellular data only |
 | Email invalidated URL | Use `hxxps://` trick or Slack code block instead |
 | Dual SIM issues | Ensure data connection is on the SIM matching the phone number |
+| eSIM not working | Turn OFF all eSIMs, wait 10 seconds, turn back ON to clear carrier cache |
 | Error codes present | Check [Error Dictionary](https://www.twilio.com/docs/verify/api/verification#sna-error-codes) |
 
 ## Resources
