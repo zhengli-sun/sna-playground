@@ -222,10 +222,10 @@ You can test SNA without carrier approval by:
 | Issue | Solution |
 |-------|----------|
 | **Error 60008: Unsupported Carrier** | Register your phone number as a Live Test Number in Twilio Console |
-| **Error -10 or 60519: Verification Failed/Pending** | 1) Check iOS settings (see Step 2 checklist) 2) Try turning OFF all eSIMs, wait 10s, turn back ON |
+| **Error -10 or 60519: Verification Failed/Pending** | Check iOS settings: disable Private Relay, VPN, Dual SIM, IP tracking (see Step 2 checklist) |
 | 404 Not Found | Verification expired (10 min limit) - restart from Step 1 |
 | URL doesn't work | Ensure Wi-Fi is OFF and using cellular data only |
-| Email invalidated URL | Use `hxxps://` trick or Slack code block instead |
+| Email invalidated URL | Use `hxxps://` trick or Slack codeblock instead |
 | Dual SIM issues | Ensure data connection is on the SIM matching the phone number |
 | eSIM not working | Turn OFF all eSIMs, wait 10 seconds, turn back ON to clear carrier cache |
 | Error codes present | Check [Error Dictionary](https://www.twilio.com/docs/verify/api/verification#sna-error-codes) |
