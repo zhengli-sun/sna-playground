@@ -9,7 +9,9 @@
 
 ## Executive Summary
 
-This RFC proposes integrating Twilio's Silent Network Auth (SNA) into Deliveroo's login/signup flows to enable frictionless phone number verification. Unlike traditional SMS OTP which requires users to wait for and enter a code, SNA verifies phone numbers directly with mobile carriers without any user action.
+This RFC proposes integrating Twilio's Silent Network Auth (SNA) into Deliveroo's login flows to enable frictionless phone number verification. Unlike traditional SMS OTP which requires users to wait for and enter a code, SNA verifies phone numbers directly with mobile carriers without any user action.
+
+> **Scope**: This RFC focuses on **existing user login only**. New user signup is out of scope for the initial implementation.
 
 ---
 
@@ -56,19 +58,19 @@ User enters phone → co-accounts → Sphinx (SMS) → User enters code → orde
 
 ### Proposed SNA Flow
 ```
-User enters phone → co-accounts → Twilio SNA → Mobile invokes URL → co-accounts checks status → orderweb
-                                      ↓
-                               [Fallback to SMS OTP if SNA fails]
+User enters phone → co-accounts → Sphinx → Twilio SNA → Mobile invokes URL → Sphinx checks status → co-accounts → orderweb
+                                                ↓
+                                         [Fallback to SMS OTP if SNA fails]
 ```
 
 ### Key Components Affected
 
 | Component | Changes Required |
 |-----------|------------------|
-| **co-accounts (Go)** | New Twilio SNA client, initiate/check verification |
+| **Sphinx** | New Twilio SNA integration: initiate/check SNA verification |
+| **co-accounts (Go)** | Call Sphinx for SNA (similar to existing SMS OTP flow) |
 | **Mobile Apps (iOS/Android)** | Invoke SNA URL via cellular, handle pre-checks |
 | **orderweb (Rails)** | Minimal changes - accepts verified sessions |
-| **Sphinx** | No changes - used as fallback |
 
 ---
 
@@ -84,19 +86,43 @@ User enters phone → co-accounts → Twilio SNA → Mobile invokes URL → co-a
 6. User logged in
 ```
 
-### 4.2 Proposed: Existing User Login via SNA (with fallback)
+> **Note on Login Options**: Using phone number as a primary login option is currently being built. For this project, we proceed with the assumption that **both email-first and phone-first login options will co-exist in production** for a certain period of time. 
+
+### 4.2 Proposed: Existing User Login via Email (with SNA enhancement)
+
+This flow maintains the current email-first pattern but immediately kicks off SNA verification when the user taps "Continue".
+
+```
+1. User enters email
+2. User taps "Continue"
+3. App shows loading state on button ("Verifying...") - NOT the OTP entry screen
+4. App → co-accounts: POST /request-login (email, sna=true)
+5. co-accounts looks up phone number associated with email
+6. co-accounts → Sphinx → Twilio: Start SNA verification using account's phone number
+7. co-accounts → App: Returns { sna_url, verification_sid }
+8. App invokes SNA URL via cellular data (background HTTP request)
+9. App waits for SNA URL response (success/failure) - typically ~4 sec
+10. App → co-accounts: POST /sna/verify { verification_sid, sna_result }
+11. co-accounts → Sphinx → Twilio: Check verification status (confirm)
+12. If APPROVED → co-accounts creates session → User logged in
+    If FAILED → App transitions to OTP entry screen → Fallback to SMS OTP flow
+```
+
+### 4.3 Proposed: Existing User Login via Phone Number (with SNA)
+
+This flow uses phone number as the primary identifier, enabling the most direct path to SNA verification.
 
 ```
 1. User enters phone number
 2. User taps "Continue"
 3. App shows loading state on button ("Verifying...") - NOT the OTP entry screen
 4. App → co-accounts: POST /request-login (with sna=true)
-5. co-accounts → Twilio: Start SNA verification
+5. co-accounts → Sphinx → Twilio: Start SNA verification
 6. co-accounts → App: Returns { sna_url, verification_sid }
 7. App invokes SNA URL via cellular data (background HTTP request)
 8. App waits for SNA URL response (success/failure) - typically ~4 sec
 9. App → co-accounts: POST /sna/verify { verification_sid, sna_result }
-10. co-accounts → Twilio: Check verification status (confirm)
+10. co-accounts → Sphinx → Twilio: Check verification status (confirm)
 11. If APPROVED → co-accounts creates session → User logged in
     If FAILED → App transitions to OTP entry screen → Fallback to SMS OTP flow
 ```
@@ -144,73 +170,122 @@ User enters phone → co-accounts → Twilio SNA → Mobile invokes URL → co-a
 
 ### Sequence Diagram
 ```
-┌──────┐          ┌─────────────┐          ┌───────┐          ┌────────┐
-│ User │          │  Mobile App │          │co-acct│          │ Twilio │
-└──┬───┘          └──────┬──────┘          └───┬───┘          └───┬────┘
-   │                     │                     │                  │
-   │  Tap "Continue"     │                     │                  │
-   │────────────────────>│                     │                  │
-   │                     │                     │                  │
-   │      [Show "Verifying..." loading screen] │                  │
-   │                     │                     │                  │
-   │                     │ POST /request-login │                  │
-   │                     │────────────────────>│                  │
-   │                     │                     │                  │
-   │                     │                     │ Start SNA        │
-   │                     │                     │─────────────────>│
-   │                     │                     │                  │
-   │                     │                     │ { sna_url }      │
-   │                     │                     │<─────────────────│
-   │                     │                     │                  │
-   │                     │ { sna_url, sid }    │                  │
-   │                     │<────────────────────│                  │
-   │                     │                     │                  │
-   │                     │ GET sna_url (cellular)                 │
-   │                     │───────────────────────────────────────>│
-   │                     │                     │                  │
-   │                     │ SNA result (success/fail)              │
-   │                     │<───────────────────────────────────────│
-   │                     │                     │                  │
-   │                     │ POST /sna/verify    │                  │
-   │                     │────────────────────>│                  │
-   │                     │                     │                  │
-   │                     │                     │ Check status     │
-   │                     │                     │─────────────────>│
-   │                     │                     │                  │
-   │                     │                     │ { approved }     │
-   │                     │                     │<─────────────────│
-   │                     │                     │                  │
-   │                     │ { success, token }  │                  │
-   │                     │<────────────────────│                  │
-   │                     │                     │                  │
-   │    [If success: Show "Logged in"]         │                  │
-   │    [If failed: Show OTP entry screen]     │                  │
-   │<────────────────────│                     │                  │
+┌──────┐          ┌─────────────┐          ┌───────┐          ┌────────┐          ┌────────┐
+│ User │          │  Mobile App │          │co-acct│          │ Sphinx │          │ Twilio │
+└──┬───┘          └──────┬──────┘          └───┬───┘          └───┬────┘          └───┬────┘
+   │                     │                     │                  │                   │
+   │  Tap "Continue"     │                     │                  │                   │
+   │────────────────────>│                     │                  │                   │
+   │                     │                     │                  │                   │
+   │      [Show "Verifying..." loading screen] │                  │                   │
+   │                     │                     │                  │                   │
+   │                     │ POST /request-login │                  │                   │
+   │                     │────────────────────>│                  │                   │
+   │                     │                     │                  │                   │
+   │                     │                     │ Start SNA        │                   │
+   │                     │                     │─────────────────>│                   │
+   │                     │                     │                  │                   │
+   │                     │                     │                  │ Start SNA         │
+   │                     │                     │                  │──────────────────>│
+   │                     │                     │                  │                   │
+   │                     │                     │                  │ { sna_url }       │
+   │                     │                     │                  │<──────────────────│
+   │                     │                     │                  │                   │
+   │                     │                     │ { sna_url }      │                   │
+   │                     │                     │<─────────────────│                   │
+   │                     │                     │                  │                   │
+   │                     │ { sna_url, sid }    │                  │                   │
+   │                     │<────────────────────│                  │                   │
+   │                     │                     │                  │                   │
+   │                     │ GET sna_url (cellular)                 │                   │
+   │                     │────────────────────────────────────────────────────────────>│
+   │                     │                     │                  │                   │
+   │                     │ SNA result (success/fail)              │                   │
+   │                     │<────────────────────────────────────────────────────────────│
+   │                     │                     │                  │                   │
+   │                     │ POST /sna/verify    │                  │                   │
+   │                     │────────────────────>│                  │                   │
+   │                     │                     │                  │                   │
+   │                     │                     │ Check status     │                   │
+   │                     │                     │─────────────────>│                   │
+   │                     │                     │                  │                   │
+   │                     │                     │                  │ Check status      │
+   │                     │                     │                  │──────────────────>│
+   │                     │                     │                  │                   │
+   │                     │                     │                  │ { approved }      │
+   │                     │                     │                  │<──────────────────│
+   │                     │                     │                  │                   │
+   │                     │                     │ { approved }     │                   │
+   │                     │                     │<─────────────────│                   │
+   │                     │                     │                  │                   │
+   │                     │ { success, token }  │                  │                   │
+   │                     │<────────────────────│                  │                   │
+   │                     │                     │                  │                   │
+   │    [If success: Show "Logged in"]         │                  │                   │
+   │    [If failed: Show OTP entry screen]     │                  │                   │
+   │<────────────────────│                     │                  │                   │
 ```
 
-### 4.3 New User Signup
-Similar flow - SNA can be used for phone verification during signup.
 
 ---
 
-## 5. Technical Approach
+## 5. Technical Implementation
 
-### 5.1 co-accounts Changes
 
-**New Twilio SNA Client:**
+### 5.1 Sphinx Changes
+
+Sphinx will integrate with Twilio's Verify API to support SNA as a new verification channel.
+
+**New Twilio SNA Integration:**
 ```go
 // Start SNA verification
-func (c *TwilioClient) StartSNAVerification(phoneNumber string) (*SNAResponse, error) {
+func (c *TwilioClient) StartSNAVerification(phoneNumber, region string) (*SNAResponse, error) {
     // POST to Twilio Verify API with channel=sna
+    // Uses region-specific endpoint (e.g., IE1 for UK)
     // Returns: verification_sid, sna_url
 }
 
 // Check verification status
-func (c *TwilioClient) CheckSNAStatus(phoneNumber string) (*StatusResponse, error) {
+func (c *TwilioClient) CheckSNAStatus(verificationSID, phoneNumber string) (*StatusResponse, error) {
     // POST to Twilio Verification Check API
     // Returns: status (approved/pending/failed), error_codes
 }
 ```
+
+**New Sphinx Endpoints:**
+```
+POST /sna/start
+Request:
+{
+  "phone_number": "+447857166752",
+  "region": "IE1"
+}
+
+Response:
+{
+  "verification_sid": "VExxxxx",
+  "sna_url": "https://mi.dnlsrv.com/..."
+}
+```
+
+```
+POST /sna/check
+Request:
+{
+  "verification_sid": "VExxxxx",
+  "phone_number": "+447857166752"
+}
+
+Response:
+{
+  "status": "approved" | "pending" | "failed",
+  "error_code": 60519  // if failed
+}
+```
+
+### 5.2 co-accounts Changes
+
+co-accounts will call Sphinx for SNA verification (similar to existing SMS OTP flow).
 
 **New/Modified Endpoints:**
 
@@ -259,7 +334,7 @@ Response:
 }
 ```
 
-### 5.2 Mobile App Changes
+### 5.3 Mobile App Changes
 
 **Pre-checks before SNA (determines if SNA is attempted):**
 ```swift
@@ -327,12 +402,14 @@ func invokeSNAUrl(_ url: String) async -> String {
 **Key Points:**
 - App decides SNA vs SMS based on device state (Wi-Fi, VPN, etc.)
 - App invokes SNA URL and waits for response (~4 sec)
-- App tells backend the result, backend confirms with Twilio
+- App tells backend the result, backend confirms with Sphinx → Twilio
 - On SNA failure, app seamlessly transitions to OTP screen
 
-### 5.3 Region Configuration
+### 5.4 Twilio Integration
 
-Twilio requires specific regions for different countries:
+#### 5.4.1 Service Configuration (Region-Specific)
+
+Twilio SNA requires region-specific configuration. For UK phone numbers, we **must use the IE1 (Dublin) region**.
 
 | Country | Twilio Region | API Endpoint |
 |---------|---------------|--------------|
@@ -340,160 +417,95 @@ Twilio requires specific regions for different countries:
 | US (+1) | US1 (Default) | `verify.twilio.com` |
 | AU (+61) | AU1 (Sydney) | `verify.sydney.au1.twilio.com` |
 
----
+**Setup Requirements:**
+1. **Create a new Verify Service** specifically for SNA in the IE1 region
+   - Existing SMS OTP services cannot be reused for SNA
+   - Service must be configured with `channel: sna` enabled
+   - See: [Twilio Verify with Regions](https://www.twilio.com/docs/verify/using-verify-silent-network-auth-with-twilio-regions)
 
-## 6. Fallback Strategy
+2. **Region-specific credentials**
+   - IE1 region requires separate API credentials
+   - Account SID and Auth Token must be provisioned for IE1
 
-SNA may fail due to:
-- User on Wi-Fi (not cellular)
-- Unsupported carrier
-- VPN/Private Relay enabled
-- eSIM cache issues
+3. **Service configuration options**
+   - Friendly name: e.g., `deliveroo-sna-uk`
+   - Code length: N/A for SNA (no OTP code)
+   - Supported channels: `sna` (with `sms` fallback)
 
-**Fallback approach:**
-1. Attempt SNA first (transparent to user)
-2. If SNA fails within 5 seconds → fallback to SMS OTP
-3. User experience: minimal delay before falling back
+#### 5.4.2 Carrier Approval
 
----
+SNA requires approval from mobile carriers before production use. Carrier approval can take **2-4 weeks** depending on carrier (UK carriers: EE, Vodafone, O2, Three).
 
-## 7. Key Differences from DoorDash/Sinch Approach
+#### 5.4.3 Cost Estimation
 
-| Aspect | DoorDash (Sinch) | Deliveroo (Twilio) |
-|--------|------------------|-------------------|
-| **SDK Required** | Yes (Sinch SDK) | No (HTTP request only) |
-| **Verification** | SDK handles | App invokes URL directly |
-| **Backend** | Risk-Gateway | co-accounts |
-| **Fallback** | RDP managed | co-accounts → Sphinx |
+| Item | Cost (USD) | Notes |
+|------|------------|-------|
+| **SNA verification (successful)** | ~$0.05 per verification | Varies by country |
+| **SNA verification (failed)** | ~$0.01 per attempt | Carrier lookup fee |
+| **SMS OTP (fallback)** | ~$0.05-0.08 per SMS | Current cost baseline |
 
-**Advantage of Twilio approach**: No SDK dependency, simpler mobile integration.
+**Cost Considerations:**
+- SNA cost is comparable to SMS OTP, but with better UX
+- Failed SNA attempts still incur a small carrier lookup fee
+- High SNA success rate = cost savings (no SMS fallback needed)
+- Expected SNA success rate: **60-80%** (depends on cellular/Wi-Fi mix)
 
----
-
-## 8. Open Questions / TODOs
-
-### 🔴 TODO 1: Sign-up Flow - In Scope or Out?
-
-**Question**: Should we include new user sign-up in the initial implementation?
-
-**Current state**: This RFC focuses on login flow for existing users.
-
-**Options**:
-| Option | Pros | Cons |
-|--------|------|------|
-| **A: Login only (Phase 1)** | Smaller scope, faster delivery, less risk | Doesn't improve sign-up conversion |
-| **B: Login + Sign-up (Full)** | Complete solution, better overall UX | Larger scope, more testing needed |
-
-**Recommendation**: TBD
+**Volume Estimates (TBD):**
+| Metric | Estimate |
+|--------|----------|
+| Monthly logins (UK) | X |
+| Expected SNA attempts | X |
+| Expected SNA success rate | 60-80% |
+| Estimated monthly SNA cost | $X |
 
 ---
 
-### 🔴 TODO 2: Email-First vs Phone-First Flow
+## 6. Rollout Strategy
 
-**Question**: Deliveroo currently uses **email** as the primary login identifier. How do we integrate SNA which requires a **phone number**?
+### 6.1 Feature Flags
 
-**Current Deliveroo flow**:
-```
-1. User enters EMAIL
-2. co-accounts checks email → returns available methods (password, magic link, SMS OTP)
-3. If SMS OTP selected → uses phone number associated with account
-```
+SNA will be rolled out behind feature flags in both frontend and backend to allow controlled experimentation and quick rollback.
 
-**Challenge**: SNA needs phone number upfront, but users enter email first.
+| Flag | Location | Description | Default |
+|------|----------|-------------|---------|
+| `sna_enabled` | Backend (co-accounts) | Master kill switch for SNA | `false` |
+| `sna_eligible_countries` | Backend (co-accounts) | Countries where SNA is enabled | `[]` |
+| `sna_rollout_percentage` | Backend (co-accounts) | % of eligible users to attempt SNA | `0` |
+| `sna_ui_enabled` | Frontend (iOS/Android) | Show SNA loading UI vs immediate OTP | `false` |
 
-**Options**:
-| Option | Description | Pros | Cons |
-|--------|-------------|------|------|
-| **A: Keep email-first** | After email check, if user has phone, attempt SNA transparently | No UX change for users | Extra API call, complexity |
-| **B: Add phone-first option** | New flow: "Continue with phone number" | Direct SNA path | Big UX change, user education |
-| **C: Hybrid** | Email-first for existing, phone-first for new sign-ups | Best of both | Two different flows to maintain |
+### 6.2 Rollout Phases
 
-**Recommendation**: TBD
+| Phase | Scope | Success Criteria | Duration |
+|-------|-------|------------------|----------|
+| **1. Internal testing** | Employees only | Verify E2E flow works | 1 week |
+| **2. Closed beta** | 1% of UK users | >50% SNA success rate, no critical bugs | a few days |
+| **3. A/B Experiment** | 50% (?) of UK users | Stable success rate, positive metrics | 2 weeks |
+| **4. Full rollout (UK)** | 100% of UK users | N/A | Ongoing |
+| **5. Expand to other markets** | IE, AU, etc. | Per-market evaluation | TBD |
 
-**Flow comparison**:
-```
-Option A (Email-first, current pattern):
-  Email → Check → [has phone?] → SNA → Logged in
-                       ↓
-                  [no phone] → Magic link / Password
+### 6.3 Measuring Metrics
 
-Option B (Phone-first, new pattern):
-  Phone → SNA → Logged in
-           ↓
-       [failed] → SMS OTP
-```
+| Metric | Target | How to Measure |
+|--------|--------|----------------|
+| SNA success rate | TBA | Successful SNA / Total SNA attempts |
+| SNA Time to login | <5 seconds (SNA path) | P50/P95 latency |
+| Login completion rate improvement | >0% | Compare SNA vs SMS OTP cohorts |
 
 ---
 
-### 🔴 TODO 3: UI During Verification
+## 7. Engineering Effort Estimate
 
-**Question**: What exactly should the UI show while SNA verification is in progress?
+### 7.1 By Component
 
-**Options**:
-| Option | Description | Example |
-|--------|-------------|---------|
-| **A: Loading button** | Button text changes to "Verifying..." with spinner | DoorDash pattern |
-| **B: Full screen loader** | Overlay or new screen with "Verifying your phone..." | More prominent |
-| **C: Subtle indicator** | Small spinner next to button, button stays enabled | Least intrusive |
+| Component | Team | Effort | Description |
+|-----------|------|--------|-------------|
+| **Sphinx** | Platform | 2 weeks | Twilio SNA client, new endpoints, region config |
+| **co-accounts** | Cx Growth | 1 week | Call Sphinx for SNA, handle responses |
+| **iOS App** | Mobile | 2 weeks | SNA URL invocation, pre-checks, UI states |
+| **Android App** | Mobile | 2 weeks | SNA URL invocation, pre-checks, UI states |
+| **Integration testing** | All | 1 week | E2E testing, carrier testing |
 
-**Considerations**:
-- How long does verification take? (~4 sec typical)
-- Should user be able to cancel?
-- What happens if user backgrounds the app?
-- Accessibility requirements?
-
-**Recommendation**: TBD
-
-**Mockup options**:
-```
-Option A: Loading Button          Option B: Full Screen
-┌─────────────────────┐          ┌─────────────────────┐
-│                     │          │                     │
-│  +44 7857 166752    │          │    ⟳                │
-│                     │          │                     │
-│  ┌───────────────┐  │          │  Verifying your     │
-│  │ ⟳ Verifying.. │  │          │  phone number...    │
-│  └───────────────┘  │          │                     │
-│                     │          │                     │
-└─────────────────────┘          └─────────────────────┘
-```
-
----
-
-### Other Open Questions
-
-4. **Eligibility criteria**: Should we check carrier support before attempting SNA?
-5. **Metrics**: What success/failure rates should trigger changes?
-6. **Rollout**: Feature flag by country/carrier first?
-7. **Cost**: Twilio SNA pricing vs SMS OTP savings?
-
----
-
-## 9. Dependencies
-
-- **Twilio Account**: Need separate credentials for IE1 region (UK)
-- **Verify Service**: Region-specific service configuration
-- **Live Test Numbers**: For testing before carrier approval
-
----
-
-## 10. Timeline (TBD)
-
-| Phase | Description | Duration |
-|-------|-------------|----------|
-| 1 | co-accounts Twilio client | X weeks |
-| 2 | Mobile app SNA invocation | X weeks |
-| 3 | Integration testing | X weeks |
-| 4 | Gradual rollout (UK first) | X weeks |
-
----
-
-## 11. Next Steps
-
-1. Review and discuss architecture approach
-2. Define detailed API contracts
-3. Estimate engineering effort
-4. Plan rollout strategy
+**Total estimated duration: BE: 3 weeks; Android: 2 weeks; iOS: 2 weeks**
 
 ---
 
